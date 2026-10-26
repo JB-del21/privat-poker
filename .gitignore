@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# A projekt a bun.lock-ot használja; npm install ne hagyjon felügyelet nélküli lock-fájlt
+package-lock.json
