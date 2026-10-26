@@ -20,6 +20,15 @@ interface LobbyViewProps {
   isLoading?: boolean;
 }
 
+const digitsOnly = (v: string) => v.replace(/\D/g, '').slice(0, 7);
+
+/** Üres vagy minimum alatti értéket a minimumra (vagy alapértékre) javít. */
+const clampNumber = (v: string, min: number, fallback: number) => {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return String(fallback);
+  return String(Math.max(min, n));
+};
+
 export const LobbyView: React.FC<LobbyViewProps> = ({
   roomCode,
   hostPlayerId,
@@ -35,9 +44,11 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const [activeTab, setActiveTab] = useState<'create' | 'join' | 'spectate'>('create');
   const [nickname, setNickname] = useState('');
   const [inputCode, setInputCode] = useState('');
-  const [smallBlind, setSmallBlind] = useState(50);
-  const [bigBlind, setBigBlind] = useState(100);
-  const [startingChips, setStartingChips] = useState(5000);
+  // Számmezők szövegként tárolva, hogy törölhetők és szabadon újraírhatók legyenek
+  // (a number + Number('') = 0 miatt az '5' beírása '05' lett, a visszaírás nem ment).
+  const [smallBlind, setSmallBlind] = useState('50');
+  const [bigBlind, setBigBlind] = useState('100');
+  const [startingChips, setStartingChips] = useState('5000');
   const [copied, setCopied] = useState(false);
 
   // If already in a room in WAITING phase
@@ -245,7 +256,10 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              onCreateRoom(nickname, smallBlind, bigBlind, startingChips);
+              const sb = parseInt(clampNumber(smallBlind, 10, 50), 10);
+              const bb = Math.max(parseInt(clampNumber(bigBlind, 20, 100), 10), sb);
+              const chips = parseInt(clampNumber(startingChips, 500, 5000), 10);
+              onCreateRoom(nickname, sb, bb, chips);
             }}
             className="space-y-4"
           >
@@ -268,12 +282,12 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">Kezdő zseton</label>
                 <input
-                  type="number"
-                  min={500}
-                  max={100000}
-                  step={500}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={startingChips}
-                  onChange={(e) => setStartingChips(Number(e.target.value))}
+                  onChange={(e) => setStartingChips(digitsOnly(e.target.value))}
+                  onBlur={() => setStartingChips(clampNumber(startingChips, 500, 5000))}
                   className="w-full h-11 px-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm font-mono font-bold"
                 />
               </div>
@@ -282,17 +296,23 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">Vakok (SB / BB)</label>
                 <div className="grid grid-cols-2 gap-1.5">
                   <input
-                    type="number"
-                    min={10}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    aria-label="Kisvak"
                     value={smallBlind}
-                    onChange={(e) => setSmallBlind(Number(e.target.value))}
+                    onChange={(e) => setSmallBlind(digitsOnly(e.target.value))}
+                    onBlur={() => setSmallBlind(clampNumber(smallBlind, 10, 50))}
                     className="h-11 px-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono font-bold text-center"
                   />
                   <input
-                    type="number"
-                    min={20}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    aria-label="Nagyvak"
                     value={bigBlind}
-                    onChange={(e) => setBigBlind(Number(e.target.value))}
+                    onChange={(e) => setBigBlind(digitsOnly(e.target.value))}
+                    onBlur={() => setBigBlind(clampNumber(bigBlind, 20, 100))}
                     className="h-11 px-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono font-bold text-center"
                   />
                 </div>
@@ -306,6 +326,9 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             >
               {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span>Szoba létrehozása</span>}
             </button>
+            {!nickname.trim() && (
+              <p className="text-center text-xs text-slate-400">Add meg a neved a szoba létrehozásához.</p>
+            )}
           </form>
         )}
 
