@@ -1,0 +1,6 @@
+{
+  "name": "Privát Poker Room",
+  "description": "Privát 2–6 fős Texas Hold'em szobák barátoknak: titkos kézi lapok telefonon, közös asztalkijelző és valós idejű játékmotor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
