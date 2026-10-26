@@ -49,6 +49,11 @@ interface RoomData {
 const app = express();
 app.use(express.json());
 
+// Lightweight health endpoint (Render health check / external uptime pinger).
+app.get('/healthz', (_req: Request, res: Response) => {
+  res.type('text/plain').send('ok');
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 

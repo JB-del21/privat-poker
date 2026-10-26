@@ -69,6 +69,12 @@ afterAll(() => {
 });
 
 describe('Szerver integráció', () => {
+  it('A /healthz végpont 200 "ok" választ ad (Render health check / uptime pinger)', async () => {
+    const res = await fetch(`${BASE}/healthz`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('ok');
+  });
+
   it('Időtúllépéssel véget ért leosztás után a zsetonok megmaradnak (nem áll vissza kezdőállásra)', async () => {
     const { code, hostToken, guestToken } = await newRoom(10);
     expect((await api(`/api/rooms/${code}/start`, { method: 'POST', token: hostToken })).status).toBe(200);

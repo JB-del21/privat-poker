@@ -1,0 +1,17 @@
+# Render Blueprint: egyetlen Node szolgáltatás, ami a frontendet és az API-t/WebSocketet is kiszolgálja.
+# FONTOS: a szobák memóriában élnek, ezért pontosan 1 példány futhat (ne skálázd fel).
+services:
+  - type: web
+    name: privat-poker
+    runtime: node
+    plan: free            # fizetős kis példányra váltva nincs elalvás
+    region: frankfurt     # Magyarországhoz legközelebbi
+    buildCommand: npm install --include=dev --no-audit --no-fund && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22
