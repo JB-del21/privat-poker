@@ -13,6 +13,22 @@ Production módban (`NODE_ENV=production`) a szerver a `dist/` mappát szolgálj
 
 Szoba létrehozása után a szobakóddal (vagy a `?room=XXXX` meghívó linkkel) csatlakozhatnak a játékosok telefonról; a TV/tablet "megfigyelőként" nyitja meg ugyanazt a kódot.
 
+## Telepítés Renderre (ajánlott)
+
+A szerver hosszan futó Node-folyamat (Express + WebSocket, a szobák memóriában élnek), ezért **nem fut serverless környezetben (pl. Vercel)**. A repó tartalmaz egy `render.yaml` Blueprintet.
+
+1. Render → **New → Blueprint** → válaszd ki ezt a repót. A `render.yaml` beállítja a buildet, az indítást és a `/healthz` ellenőrzést.
+2. Pontosan **1 példány** fusson (a memóriában tárolt szobák miatt ne skálázd fel).
+3. A játék címe: `https://<szolgáltatás-neve>.onrender.com`, a frontend és az API ugyanazon a címen van.
+
+### Ne aludjon el az ingyenes példány
+
+A Render ingyenes példánya 15 perc bejövő forgalom nélkül elalszik (újraindulás ~1 perc), és ilyenkor **a szobák elvesznek**. Bejövő HTTP kérés és bejövő WebSocket-üzenet is ébren tartja, tehát játék közben nem alszik el. Játékok között egy külső pingelő tartja ébren:
+
+- [UptimeRobot](https://uptimerobot.com) (ingyenes) → HTTP(s) monitor → `https://<szolgáltatás-neve>.onrender.com/healthz`, 5 percenként.
+- Az ingyenes csomag havi 750 példányórát ad; egy szolgáltatás folyamatos futása ~744 óra, ez éppen belefér.
+- Megbízhatóbb megoldás a fizetős kis példány, ott nincs elalvás.
+
 ## Parancsok
 
 | Parancs | Feladat |
