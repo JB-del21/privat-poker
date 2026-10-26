@@ -1,20 +1,44 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Privát Poker Room
 
-# Run and deploy your AI Studio app
+Privát 2–6 fős Texas Hold'em szoba barátoknak: a zárt lapok mindenki saját telefonján vannak, a közös TV/tablet csak az asztalt mutatja. A játékmotor és a titkos állapot kizárólag a szerveren él.
 
-This contains everything you need to run your app locally.
+## Futtatás
 
-View your app in AI Studio: https://ai.studio/apps/5ec6a219-8744-4c4a-a0d2-66580ee35d52
+```bash
+npm install        # vagy: bun install
+npm run dev        # http://localhost:3000
+```
 
-## Run Locally
+Production módban (`NODE_ENV=production`) a szerver a `dist/` mappát szolgálja ki, ezt előbb `npm run build` készíti el.
 
-**Prerequisites:**  Node.js
+Szoba létrehozása után a szobakóddal (vagy a `?room=XXXX` meghívó linkkel) csatlakozhatnak a játékosok telefonról; a TV/tablet "megfigyelőként" nyitja meg ugyanazt a kódot.
 
+## Parancsok
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+| Parancs | Feladat |
+| --- | --- |
+| `npm run dev` / `npm start` | Express + WebSocket szerver (fejlesztéskor Vite middleware) |
+| `npm run build` | Frontend build (`dist/`) |
+| `npm test` | Egység- és szerver-integrációs tesztek (Vitest) |
+| `npm run lint` | Típusellenőrzés (`tsc --noEmit`) |
+
+A szerver-integrációs tesztek valódi szerverfolyamatot indítanak, és egy ~12 másodperces időzítős leosztást is lefuttatnak, ezért a teljes tesztelés néhány másodpercig tart.
+
+## Felépítés
+
+- `server.ts`: REST + WebSocket, szobák, 30 mp-es (állítható) szerveroldali köridőzítő
+- `src/engine/`: pakli, kézkiértékelő, kassza/mellékkassza, determinisztikus állapotgép
+- `src/components/`: lobby, játékos (telefon) és asztal (TV) nézet
+- `tests/`: motor-egységtesztek és szerver-integrációs tesztek
+
+## Biztonsági alapelvek
+
+- A zárt lapok csak a jogosult játékos saját session tokenjével érhetők el; a közös nézet csak showdownkor kap lapokat.
+- Showdown nélküli nyereménynél (mindenki dobott) a nyertes lapjai nem lepleződnek le.
+- Az akciók idempotensek (`action_id`) és állapotverzióhoz kötöttek (`expected_version`).
+- A `/start` csak a szobagazdának, a `/next-hand` és a `/rebuy` csak szobatagoknak engedélyezett.
+
+## Ismert korlátok
+
+- A szobák és leosztások a szerverfolyamat memóriájában élnek: újraindításkor elvesznek (perzisztens tárolás még nincs).
+- A visszaszámláló a kliens órájától függ, a szerver időzítője viszont mérvadó.
