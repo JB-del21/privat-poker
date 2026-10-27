@@ -6,13 +6,27 @@
 import React, { useState } from 'react';
 import { Copy, Users, Play, Tv, ShieldCheck, ArrowRight, Loader2, Crown } from 'lucide-react';
 import roomBanner from '../assets/images/poker_room_banner_1793043188481.jpg';
+import {
+  BLIND_PRESETS,
+  CHIP_PRESETS,
+  DEFAULT_BLINDS_INDEX,
+  DEFAULT_CHIPS,
+  DEFAULT_TIME,
+  TIME_PRESETS,
+} from '../utils/presets';
 
 interface LobbyViewProps {
   roomCode?: string;
   hostPlayerId?: string;
   myPlayerId?: string;
   players?: { id: string; nickname: string; chips: number; isConnected: boolean }[];
-  onCreateRoom: (nickname: string, smallBlind: number, bigBlind: number, startingChips: number) => Promise<void>;
+  onCreateRoom: (
+    nickname: string,
+    smallBlind: number,
+    bigBlind: number,
+    startingChips: number,
+    turnTimeLimitSec: number
+  ) => Promise<void>;
   onJoinRoom: (roomCode: string, nickname: string) => Promise<void>;
   onStartGame: () => Promise<void>;
   onSpectate: (roomCode: string) => void;
@@ -20,14 +34,41 @@ interface LobbyViewProps {
   isLoading?: boolean;
 }
 
-const digitsOnly = (v: string) => v.replace(/\D/g, '').slice(0, 7);
+interface ChoiceGroupProps<T> {
+  label: string;
+  options: ReadonlyArray<{ value: T; text: string }>;
+  value: T;
+  onChange: (v: T) => void;
+}
 
-/** Üres vagy minimum alatti értéket a minimumra (vagy alapértékre) javít. */
-const clampNumber = (v: string, min: number, fallback: number) => {
-  const n = parseInt(v, 10);
-  if (!Number.isFinite(n)) return String(fallback);
-  return String(Math.max(min, n));
-};
+/** Nagy, ujjal könnyen eltalálható választógombok (segmented control). */
+function ChoiceGroup<T extends string | number>({ label, options, value, onChange }: ChoiceGroupProps<T>) {
+  return (
+    <div role="group" aria-label={label}>
+      <div className="block text-xs font-semibold text-slate-300 mb-1.5">{label}</div>
+      <div className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+        {options.map((o) => {
+          const active = o.value === value;
+          return (
+            <button
+              key={String(o.value)}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onChange(o.value)}
+              className={`h-12 rounded-xl border text-sm font-mono font-bold tabular-nums transition-colors active:scale-95 ${
+                active
+                  ? 'bg-amber-400 border-amber-300 text-slate-950'
+                  : 'bg-slate-950 border-slate-800 text-slate-200 hover:border-slate-600'
+              }`}
+            >
+              {o.text}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export const LobbyView: React.FC<LobbyViewProps> = ({
   roomCode,
@@ -44,11 +85,9 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const [activeTab, setActiveTab] = useState<'create' | 'join' | 'spectate'>('create');
   const [nickname, setNickname] = useState('');
   const [inputCode, setInputCode] = useState('');
-  // Számmezők szövegként tárolva, hogy törölhetők és szabadon újraírhatók legyenek
-  // (a number + Number('') = 0 miatt az '5' beírása '05' lett, a visszaírás nem ment).
-  const [smallBlind, setSmallBlind] = useState('50');
-  const [bigBlind, setBigBlind] = useState('100');
-  const [startingChips, setStartingChips] = useState('5000');
+  const [blindsIndex, setBlindsIndex] = useState<number>(DEFAULT_BLINDS_INDEX);
+  const [startingChips, setStartingChips] = useState<number>(DEFAULT_CHIPS);
+  const [turnTime, setTurnTime] = useState<number>(DEFAULT_TIME);
   const [copied, setCopied] = useState(false);
 
   // If already in a room in WAITING phase
@@ -256,10 +295,8 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              const sb = parseInt(clampNumber(smallBlind, 10, 50), 10);
-              const bb = Math.max(parseInt(clampNumber(bigBlind, 20, 100), 10), sb);
-              const chips = parseInt(clampNumber(startingChips, 500, 5000), 10);
-              onCreateRoom(nickname, sb, bb, chips);
+              const { smallBlind, bigBlind } = BLIND_PRESETS[blindsIndex];
+              onCreateRoom(nickname, smallBlind, bigBlind, startingChips, turnTime);
             }}
             className="space-y-4"
           >
@@ -278,46 +315,24 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">Kezdő zseton</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={startingChips}
-                  onChange={(e) => setStartingChips(digitsOnly(e.target.value))}
-                  onBlur={() => setStartingChips(clampNumber(startingChips, 500, 5000))}
-                  className="w-full h-11 px-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm font-mono font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">Vakok (SB / BB)</label>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    aria-label="Kisvak"
-                    value={smallBlind}
-                    onChange={(e) => setSmallBlind(digitsOnly(e.target.value))}
-                    onBlur={() => setSmallBlind(clampNumber(smallBlind, 10, 50))}
-                    className="h-11 px-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono font-bold text-center"
-                  />
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    aria-label="Nagyvak"
-                    value={bigBlind}
-                    onChange={(e) => setBigBlind(digitsOnly(e.target.value))}
-                    onBlur={() => setBigBlind(clampNumber(bigBlind, 20, 100))}
-                    className="h-11 px-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono font-bold text-center"
-                  />
-                </div>
-              </div>
-            </div>
+            <ChoiceGroup
+              label="Kezdő zseton"
+              value={startingChips}
+              onChange={setStartingChips}
+              options={CHIP_PRESETS.map((c) => ({ value: c, text: c.toLocaleString('hu-HU') }))}
+            />
+            <ChoiceGroup
+              label="Vakok (kis / nagy)"
+              value={blindsIndex}
+              onChange={setBlindsIndex}
+              options={BLIND_PRESETS.map((b, i) => ({ value: i, text: `${b.smallBlind}/${b.bigBlind}` }))}
+            />
+            <ChoiceGroup
+              label="Gondolkodási idő"
+              value={turnTime}
+              onChange={setTurnTime}
+              options={TIME_PRESETS.map((t) => ({ value: t, text: `${t} mp` }))}
+            />
 
             <button
               type="submit"
