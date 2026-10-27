@@ -29,6 +29,10 @@ A Render ingyenes példánya 15 perc bejövő forgalom nélkül elalszik (újrai
 - Az ingyenes csomag havi 750 példányórát ad; egy szolgáltatás folyamatos futása ~744 óra, ez éppen belefér.
 - Megbízhatóbb megoldás a fizetős kis példány, ott nincs elalvás.
 
+## Mentés (Supabase / Postgres)
+
+Állítsd be a `DATABASE_URL` környezeti változót (Supabase: Connect → Session pooler). A szerver induláskor létrehozza a `poker_rooms` táblát, minden lépés után menti a szobát, induláskor visszatölti. Ha az adatbázis nem érhető el, a játék memóriával megy tovább, a hiba a naplóba kerül. Helyi Postgreshez `PGSSL_DISABLE=1`.
+
 ## Parancsok
 
 | Parancs | Feladat |
@@ -56,5 +60,5 @@ A szerver-integrációs tesztek valódi szerverfolyamatot indítanak, és egy ~1
 
 ## Ismert korlátok
 
-- A szobák és leosztások a szerverfolyamat memóriájában élnek: újraindításkor elvesznek (perzisztens tárolás még nincs).
+- A szobák `DATABASE_URL` megadása esetén Postgresbe (Supabase) is mentődnek, és újraindítás után visszatöltődnek (24 óránál régebbiek nem). Nélküle csak memóriában élnek.
 - A visszaszámláló a kliens órájától függ, a szerver időzítője viszont mérvadó.

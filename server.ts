@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { PokerEngine } from './src/engine/pokerEngine';
 import { GamePhase, GameState, PlayerAction } from './src/types/poker';
+import { createRoomStore, StoredRoom } from './src/server/roomStore';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,6 +59,21 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 const rooms = new Map<string, RoomData>();
+const store = createRoomStore(process.env.DATABASE_URL, (m) => console.error(`[store] ${m}`));
+
+function toStored(room: RoomData): StoredRoom {
+  return {
+    roomCode: room.roomCode,
+    hostPlayerId: room.hostPlayerId,
+    settings: room.settings,
+    players: room.players,
+    gameState: room.gameState,
+    processedActionIds: Array.from(room.processedActionIds),
+    dealerIndex: room.dealerIndex,
+    handNumber: room.handNumber,
+    lastActiveAt: room.lastActiveAt,
+  };
+}
 const connectedClients = new Set<ConnectedClient>();
 
 function generateRoomCode(): string {
@@ -90,6 +106,7 @@ function syncRoomPlayerChips(room: RoomData) {
 
 function broadcastRoom(room: RoomData) {
   room.lastActiveAt = Date.now();
+  store.save(toStored(room));
   for (const client of connectedClients) {
     if (client.roomCode === room.roomCode && client.ws.readyState === WebSocket.OPEN) {
       if (room.gameState) {
@@ -218,6 +235,7 @@ app.post('/api/rooms', (req: Request, res: Response) => {
   };
 
   rooms.set(roomCode, room);
+  store.save(toStored(room));
 
   res.status(201).json({
     roomCode,
@@ -538,6 +556,7 @@ setInterval(() => {
     if (now - r.lastActiveAt > 24 * 60 * 60 * 1000) {
       if (r.turnTimer) clearInterval(r.turnTimer);
       rooms.delete(code);
+      store.remove(code);
     }
   }
 }, 60 * 60 * 1000);
@@ -624,7 +643,39 @@ wss.on('connection', (ws: WebSocket) => {
 });
 
 // Vite Integration
+async function restoreRooms() {
+  try {
+    await store.init();
+    const stored = await store.loadAll();
+    for (const sr of stored) {
+      const room: RoomData = {
+        roomCode: sr.roomCode,
+        hostPlayerId: sr.hostPlayerId,
+        settings: sr.settings,
+        players: sr.players.map((p) => ({ ...p, isConnected: false })),
+        gameState: sr.gameState as GameState | null,
+        processedActionIds: new Set(sr.processedActionIds),
+        turnTimer: null,
+        dealerIndex: sr.dealerIndex,
+        handNumber: sr.handNumber,
+        lastActiveAt: sr.lastActiveAt,
+      };
+      // Újraindítás alatt eltelt idő ne számítson bele a gondolkodási időbe.
+      if (room.gameState && room.gameState.phase !== 'SHOWDOWN' && room.gameState.phase !== 'HAND_COMPLETE') {
+        room.gameState = { ...room.gameState, turnStartedAt: Date.now() };
+        setupTurnTimer(room);
+      }
+      rooms.set(room.roomCode, room);
+    }
+    // eslint-disable-next-line no-console
+    if (stored.length) console.log(`[store] ${stored.length} szoba visszatöltve`);
+  } catch (e) {
+    console.error(`[store] visszatöltés sikertelen, memóriával megyünk tovább: ${(e as Error).message}`);
+  }
+}
+
 async function startServer() {
+  await restoreRooms();
   const isProd = process.env.NODE_ENV === 'production';
 
   if (!isProd) {
@@ -645,6 +696,12 @@ async function startServer() {
   server.listen(PORT, () => {
     // eslint-disable-next-line no-console
     console.log(`Poker Room server running at http://0.0.0.0:${PORT}`);
+  });
+}
+
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => {
+    store.flush().finally(() => process.exit(0));
   });
 }
 
