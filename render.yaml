@@ -1,5 +1,5 @@
 # Render Blueprint: egyetlen Node szolgáltatás, ami a frontendet és az API-t/WebSocketet is kiszolgálja.
-# FONTOS: a szobák memóriában élnek, ezért pontosan 1 példány futhat (ne skálázd fel).
+# FONTOS: pontosan 1 példány futhat (ne skálázd fel): az időzítők és a WebSocket-kapcsolatok a folyamatban élnek.
 services:
   - type: web
     name: privat-poker
@@ -15,3 +15,5 @@ services:
         value: production
       - key: NODE_VERSION
         value: 22
+      - key: DATABASE_URL     # Supabase Session pooler; a Render felületén add meg
+        sync: false
