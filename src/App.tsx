@@ -160,7 +160,8 @@ export default function App() {
     nickname: string,
     smallBlind: number,
     bigBlind: number,
-    startingChips: number
+    startingChips: number,
+    turnTimeLimitSec: number
   ) => {
     setIsLoading(true);
     setError(null);
@@ -168,7 +169,7 @@ export default function App() {
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nickname, smallBlind, bigBlind, startingChips }),
+        body: JSON.stringify({ nickname, smallBlind, bigBlind, startingChips, turnTimeLimitSec }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Szoba létrehozása sikertelen.');
