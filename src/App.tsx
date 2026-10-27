@@ -357,6 +357,7 @@ export default function App() {
           onNextHand={handleNextHand}
           onSwitchToPlayer={!isSpectator && playerId ? () => setViewMode('PLAYER') : undefined}
           isHost={isHost}
+          myPlayerId={playerId || undefined}
         />
       );
     }

@@ -3,142 +3,138 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
-import { Card, PublicGameState } from '../types/poker';
+import React, { useEffect, useState } from 'react';
+import { PublicGameState, PublicPlayerView } from '../types/poker';
 import { CardView } from './CardView';
 import { evaluate7Cards } from '../engine/evaluator';
 import { soundManager } from '../utils/audio';
-import { Eye, EyeOff, Tv, Volume2, VolumeX, AlertCircle, RefreshCw, PlusCircle } from 'lucide-react';
+import { getSeatBadges, phaseLabel, SeatBadge } from '../utils/seats';
+import { AlertCircle, Eye, EyeOff, Minus, Plus, PlusCircle, RefreshCw, Tv, Volume2, VolumeX } from 'lucide-react';
+
+type ActionKind = 'FOLD' | 'CHECK' | 'CALL' | 'BET' | 'RAISE';
 
 interface PlayerViewProps {
   gameState: PublicGameState;
   myPlayerId: string;
   errorMessage?: string | null;
-  onAction: (type: 'FOLD' | 'CHECK' | 'CALL' | 'BET' | 'RAISE', amount?: number) => void;
+  onAction: (type: ActionKind, amount?: number) => void;
   onNextHand: () => void;
   onRebuy: () => void;
   onOpenTableView?: () => void;
 }
 
+const fmt = (n: number) => n.toLocaleString('hu-HU');
+
+const BADGE_STYLE: Record<SeatBadge, string> = {
+  D: 'bg-white text-slate-900',
+  SB: 'bg-blue-500 text-white',
+  BB: 'bg-amber-500 text-slate-950',
+};
+
+const Badges: React.FC<{ badges?: SeatBadge[] }> = ({ badges }) => (
+  <>
+    {badges?.map((b) => (
+      <span
+        key={b}
+        className={`inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full text-[9px] font-black leading-none ${BADGE_STYLE[b]}`}
+      >
+        {b}
+      </span>
+    ))}
+  </>
+);
+
 export const PlayerView: React.FC<PlayerViewProps> = ({
   gameState,
   myPlayerId,
-  errorMessage: externalError,
+  errorMessage,
   onAction,
   onNextHand,
   onRebuy,
   onOpenTableView,
 }) => {
-  // Mobile Privacy: cards are hidden by default to prevent couch peekers!
+  // Privacy: a zárt lapok alapból rejtettek, hogy a szomszéd ne lásson bele.
   const [isCardsHidden, setIsCardsHidden] = useState<boolean>(true);
+  const [raiseOpen, setRaiseOpen] = useState<boolean>(false);
   const [raiseAmount, setRaiseAmount] = useState<number>(gameState.minRaise);
   const [isMuted, setIsMuted] = useState<boolean>(soundManager.getMuted());
-  const [internalError, setInternalError] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
 
   const me = gameState.players.find((p) => p.id === myPlayerId);
-  const isMyTurn =
-    gameState.phase !== 'SHOWDOWN' &&
-    gameState.phase !== 'HAND_COMPLETE' &&
-    gameState.players[gameState.currentActionIndex]?.id === myPlayerId;
+  const handRunning = gameState.phase !== 'SHOWDOWN' && gameState.phase !== 'HAND_COMPLETE';
+  const actor = gameState.players[gameState.currentActionIndex];
+  const isMyTurn = handRunning && actor?.id === myPlayerId;
+  const allowed = gameState.myAllowedActions;
 
-  // Sound alert when turn transitions to this player
   useEffect(() => {
-    if (isMyTurn) {
-      soundManager.playTurnAlert();
-    }
-  }, [isMyTurn]);
-
-  // Sync raise amount default when turn or highestBet changes
-  useEffect(() => {
-    if (gameState.myAllowedActions) {
-      setRaiseAmount(gameState.myAllowedActions.minRaiseAmount);
-    }
-  }, [gameState.myAllowedActions, gameState.highestBet]);
-
-  // Turn timer calculation
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(timer);
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
   }, []);
 
-  const turnRemainingSec = gameState.turnStartedAt
-    ? Math.max(0, Math.ceil(gameState.turnTimeLimitSec - (now - gameState.turnStartedAt) / 1000))
-    : gameState.turnTimeLimitSec;
+  useEffect(() => {
+    if (isMyTurn) soundManager.playTurnAlert();
+    if (!isMyTurn) setRaiseOpen(false);
+  }, [isMyTurn]);
+
+  // Új leosztásnál a lapok újra elrejtve indulnak.
+  useEffect(() => {
+    setIsCardsHidden(true);
+  }, [gameState.handNumber]);
+
+  useEffect(() => {
+    if (allowed) setRaiseAmount(allowed.minRaiseAmount);
+  }, [allowed?.minRaiseAmount, allowed?.maxRaiseAmount, gameState.highestBet, gameState.phase]);
+
+  const limit = gameState.turnTimeLimitSec || 30;
+  const remainingSec = gameState.turnStartedAt
+    ? Math.max(0, Math.ceil(limit - (now - gameState.turnStartedAt) / 1000))
+    : limit;
+  const remainingFraction = Math.max(0, Math.min(1, remainingSec / limit));
 
   const totalPot = gameState.pots.reduce((sum, p) => sum + p.amount, 0);
+  const badges = getSeatBadges(gameState.players.length, gameState.dealerIndex);
+  const myIndex = gameState.players.findIndex((p) => p.id === myPlayerId);
 
-  // Calculate current hand strength if we have hole cards
-  let currentHandDescription = '';
-  if (gameState.myHoleCards && gameState.myHoleCards.length === 2) {
-    const allKnownCards = [...gameState.myHoleCards, ...gameState.communityCards];
-    if (allKnownCards.length >= 5) {
-      try {
-        const evaluation = evaluate7Cards(allKnownCards);
-        currentHandDescription = evaluation.descr;
-      } catch {
-        currentHandDescription = '';
-      }
+  let handDescr = '';
+  if (gameState.myHoleCards?.length === 2 && gameState.communityCards.length >= 3) {
+    try {
+      handDescr = evaluate7Cards([...gameState.myHoleCards, ...gameState.communityCards]).descr;
+    } catch {
+      handDescr = '';
     }
   }
 
-  const handleAction = (type: 'FOLD' | 'CHECK' | 'CALL' | 'BET' | 'RAISE', amount?: number) => {
-    setInternalError(null);
+  const act = (type: ActionKind, amount?: number) => {
     if (type === 'FOLD') soundManager.playFold();
     else soundManager.playChip();
-
-    try {
-      onAction(type, amount);
-    } catch (err) {
-      setInternalError(err instanceof Error ? err.message : 'Hiba történt.');
-    }
+    setRaiseOpen(false);
+    onAction(type, amount);
   };
 
-  /**
-   * Correct No-Limit Texas Hold'em pot-sized raise calculation:
-   * Target bet = current highest bet + call amount + pot before call
-   */
-  const handleQuickRaise = (mode: 'min' | 'allin' | 'half_pot' | 'pot') => {
-    if (!gameState.myAllowedActions || !me) return;
-    const minTarget = gameState.myAllowedActions.minRaiseAmount;
-    const maxTarget = gameState.myAllowedActions.maxRaiseAmount;
+  const clampRaise = (v: number) =>
+    allowed ? Math.max(allowed.minRaiseAmount, Math.min(allowed.maxRaiseAmount, Math.round(v))) : v;
 
-    if (mode === 'min') {
-      setRaiseAmount(minTarget);
-    } else if (mode === 'allin') {
-      setRaiseAmount(maxTarget);
-    } else if (mode === 'half_pot') {
-      const callDiff = Math.max(0, gameState.highestBet - me.currentBet);
-      const potAfterCall = totalPot + callDiff;
-      let target = Math.round(gameState.highestBet + potAfterCall * 0.5);
-      target = Math.max(minTarget, Math.min(maxTarget, target));
-      setRaiseAmount(target);
-    } else if (mode === 'pot') {
-      const callDiff = Math.max(0, gameState.highestBet - me.currentBet);
-      const potAfterCall = totalPot + callDiff;
-      let target = gameState.highestBet + potAfterCall;
-      target = Math.max(minTarget, Math.min(maxTarget, target));
-      setRaiseAmount(target);
-    }
+  const quickRaise = (mode: 'min' | 'half' | 'pot' | 'allin') => {
+    if (!allowed || !me) return;
+    const callDiff = Math.max(0, gameState.highestBet - me.currentBet);
+    const potAfterCall = totalPot + callDiff;
+    if (mode === 'min') setRaiseAmount(allowed.minRaiseAmount);
+    else if (mode === 'allin') setRaiseAmount(allowed.maxRaiseAmount);
+    else if (mode === 'half') setRaiseAmount(clampRaise(gameState.highestBet + potAfterCall * 0.5));
+    else setRaiseAmount(clampRaise(gameState.highestBet + potAfterCall));
   };
 
-  const toggleSound = () => {
-    const muted = soundManager.toggleMute();
-    setIsMuted(muted);
-  };
-
-  const allowed = gameState.myAllowedActions;
-  const activeError = externalError || internalError;
+  const toggleSound = () => setIsMuted(soundManager.toggleMute());
 
   if (!me) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center">
+      <div className="h-dvh bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center">
         <h2 className="text-xl font-bold mb-2">Nem található a játékosod ebben a szobában</h2>
         <p className="text-sm text-slate-400 mb-6">A munkameneted lejárhatott vagy újracsatlakozás szükséges.</p>
         {onOpenTableView && (
           <button
             onClick={onOpenTableView}
-            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-sm font-semibold transition-colors"
+            className="h-12 px-6 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-sm font-semibold"
           >
             Közös asztal megnyitása
           </button>
@@ -147,345 +143,338 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
     );
   }
 
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between max-w-md mx-auto relative select-none shadow-2xl border-x border-slate-800/60">
-      {/* Mobile Top App Bar */}
-      <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-600 to-amber-400 text-slate-950 font-black flex items-center justify-center text-xs shadow">
-            {me.nickname.substring(0, 2).toUpperCase()}
+  const renderOpponent = (p: PublicPlayerView) => {
+    const idx = gameState.players.findIndex((x) => x.id === p.id);
+    const isActor = handRunning && actor?.id === p.id;
+    return (
+      <div
+        key={p.id}
+        className={`relative rounded-xl border px-2.5 py-2 flex items-center gap-2 min-w-0 ${
+          isActor ? 'bg-amber-950/50 border-amber-400 ring-1 ring-amber-400/60' : 'bg-slate-900/70 border-slate-800'
+        } ${p.folded ? 'opacity-45' : ''}`}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1 min-w-0">
+            <span className="text-[13px] font-bold text-white truncate">{p.nickname}</span>
+            <Badges badges={badges[idx]} />
           </div>
-          <div className="flex flex-col">
-            <span className="text-xs font-bold text-white truncate max-w-[120px]">{me.nickname}</span>
-            <span className="text-[11px] font-mono font-bold text-amber-400 tabular-nums">
-              {me.chips.toLocaleString('hu-HU')} zseton
-            </span>
+          <div className="flex items-center gap-2 text-[11px] font-mono tabular-nums">
+            <span className="text-slate-300">{fmt(p.chips)}</span>
+            {p.currentBet > 0 && <span className="font-bold text-amber-400">+{fmt(p.currentBet)}</span>}
+          </div>
+          <div className="text-[10px] font-bold uppercase leading-tight h-3">
+            {p.folded ? (
+              <span className="text-rose-400">Fold</span>
+            ) : p.allIn ? (
+              <span className="text-amber-300">All-in</span>
+            ) : isActor ? (
+              <span className="text-amber-400 animate-pulse">Lép · {remainingSec}s</span>
+            ) : !p.isConnected ? (
+              <span className="text-slate-500">Offline</span>
+            ) : null}
           </div>
         </div>
+        <div className="flex -space-x-2 shrink-0">
+          {p.revealedCards?.length ? (
+            p.revealedCards.map((c, i) => <CardView key={i} card={c} size="xs" />)
+          ) : p.folded ? null : (
+            <>
+              <CardView faceDown size="xs" />
+              <CardView faceDown size="xs" />
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
 
-        {/* Room Code & Utility Buttons */}
-        <div className="flex items-center gap-1.5">
-          <div className="px-2 py-1 rounded-md bg-slate-800 border border-slate-700 text-[11px] font-mono font-bold text-amber-400">
-            #{gameState.roomCode}
+  const opponents = gameState.players.filter((p) => p.id !== myPlayerId);
+
+  return (
+    <div className="h-dvh bg-slate-950 text-slate-100 flex flex-col max-w-md mx-auto relative select-none border-x border-slate-800/60">
+      {/* Fejléc */}
+      <header className="relative flex-none bg-slate-900 border-b border-slate-800 px-3 h-14 flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-amber-600 to-amber-400 text-slate-950 font-black flex items-center justify-center text-xs">
+            {me.nickname.substring(0, 2).toUpperCase()}
           </div>
-
+          <div className="leading-tight min-w-0">
+            <div className="text-[13px] font-bold text-white truncate max-w-[120px]">{me.nickname}</div>
+            <div className="text-[12px] font-mono font-bold text-amber-400 tabular-nums">{fmt(me.chips)} zseton</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="px-2 h-8 flex items-center rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-mono font-bold text-amber-400">
+            #{gameState.roomCode}
+          </span>
           {onOpenTableView && (
             <button
               onClick={onOpenTableView}
-              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-              title="Közös asztal nézet (TV / Tablet)"
+              aria-label="Közös asztal nézet"
+              className="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-800 text-slate-300 active:bg-slate-700"
             >
               <Tv className="w-4 h-4" />
             </button>
           )}
-
           <button
             onClick={toggleSound}
-            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-            title="Hang"
+            aria-label="Hang"
+            className="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-800 text-slate-300 active:bg-slate-700"
           >
             {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
         </div>
+        {handRunning && (
+          <div
+            className={`absolute left-0 bottom-0 h-0.5 transition-[width] duration-300 ${
+              remainingSec <= 5 ? 'bg-rose-500' : 'bg-amber-400'
+            }`}
+            style={{ width: `${remainingFraction * 100}%` }}
+          />
+        )}
       </header>
 
-      {/* Stretch Zone: Community Cards, Pot & Opponents State */}
-      <main className="flex-1 flex flex-col p-4 gap-3 overflow-y-auto">
-        {/* Pot & Phase Strip */}
-        <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-slate-900/80 border border-slate-800">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">Kassza:</span>
-            <span className="text-base font-extrabold font-mono text-amber-400 tabular-nums">
-              {totalPot.toLocaleString('hu-HU')}
-            </span>
+      {/* Játéktér (ha kevés a hely, ez görög, a lenti gombok nem) */}
+      <main className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-3">
+        {/* Kassza + szakasz + ki lép */}
+        <div className="rounded-xl bg-slate-900/80 border border-slate-800 px-3 py-2 flex items-center justify-between">
+          <div className="leading-tight">
+            <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400">Kassza</div>
+            <div className="text-xl font-black font-mono text-amber-400 tabular-nums">{fmt(totalPot)}</div>
           </div>
-
-          <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-300">
-            <span className="text-amber-400 font-bold">{gameState.phase.replace('_', ' ')}</span>
-            <span className="text-slate-400">· #{gameState.handNumber}. leosztás</span>
+          <div className="text-right leading-tight">
+            <div className="text-[13px] font-bold text-amber-300">{phaseLabel(gameState.phase)}</div>
+            <div className="text-[11px] text-slate-400">
+              #{gameState.handNumber}. leosztás · Vak {gameState.smallBlind}/{gameState.bigBlind}
+            </div>
           </div>
         </div>
 
-        {/* Community Board Cards */}
-        <div className="flex flex-col items-center justify-center py-2 px-3 rounded-2xl bg-emerald-950/40 border border-emerald-900/40 min-h-[96px]">
-          <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-400/80 mb-1.5">
-            Közös lapok (Board)
-          </span>
-          <div className="flex items-center gap-1.5">
-            {gameState.communityCards.length === 0 ? (
-              <span className="text-xs text-slate-400 py-4 font-medium">Osztás előtt</span>
+        {/* Közös lapok: mindig 5 hely */}
+        <div className="rounded-2xl bg-emerald-950/40 border border-emerald-900/50 py-3 flex items-center justify-center gap-1.5">
+          {[0, 1, 2, 3, 4].map((i) => {
+            const card = gameState.communityCards[i];
+            return card ? (
+              <CardView key={i} card={card} size="md" />
             ) : (
-              gameState.communityCards.map((card, idx) => (
-                <CardView key={idx} card={card} size="md" />
-              ))
-            )}
-          </div>
+              <div key={i} className="w-14 h-20 rounded-lg border border-dashed border-emerald-800/60 bg-emerald-950/30" />
+            );
+          })}
         </div>
 
-        {/* Other Players Status List */}
-        <div className="grid grid-cols-2 gap-2">
-          {gameState.players
-            .filter((p) => p.id !== myPlayerId)
-            .map((p) => {
-              const isCurrentActor =
-                gameState.phase !== 'SHOWDOWN' &&
-                gameState.phase !== 'HAND_COMPLETE' &&
-                gameState.players[gameState.currentActionIndex]?.id === p.id;
+        {/* Ellenfelek */}
+        {opponents.length > 0 && (
+          <div className="grid grid-cols-2 gap-2">{opponents.map(renderOpponent)}</div>
+        )}
 
-              return (
-                <div
-                  key={p.id}
-                  className={`p-2 rounded-xl border flex flex-col justify-between text-xs transition-all ${
-                    isCurrentActor
-                      ? 'bg-amber-950/40 border-amber-500/80 ring-1 ring-amber-500/50'
-                      : 'bg-slate-900/60 border-slate-800/80'
-                  } ${p.folded ? 'opacity-40 grayscale' : 'opacity-100'}`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-white truncate max-w-[80px]">{p.nickname}</span>
-                    {p.folded ? (
-                      <span className="text-[9px] font-bold text-rose-400 uppercase">Fold</span>
-                    ) : p.allIn ? (
-                      <span className="text-[9px] font-extrabold text-amber-300 uppercase">All-In</span>
-                    ) : isCurrentActor ? (
-                      <span className="text-[9px] font-bold text-amber-400 animate-pulse">Lép</span>
-                    ) : null}
-                  </div>
-
-                  <div className="flex items-center justify-between mt-1 text-[11px]">
-                    <span className="font-mono text-slate-300 tabular-nums">{p.chips.toLocaleString('hu-HU')}</span>
-                    {p.currentBet > 0 && (
-                      <span className="font-mono font-bold text-amber-400 tabular-nums">+{p.currentBet}</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-        </div>
-
-        {/* Player's Secret Hole Cards Zone */}
-        <div className="mt-auto pt-2 flex flex-col items-center">
-          <div className="flex items-center justify-between w-full px-2 mb-1">
-            <span className="text-[11px] uppercase font-bold tracking-wider text-slate-400">
-              Saját zárt lapjaid
-            </span>
-
-            {/* Privacy Peek Toggle */}
-            <button
-              onClick={() => setIsCardsHidden(!isCardsHidden)}
-              className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-amber-400 transition-colors"
-            >
-              {isCardsHidden ? (
-                <>
-                  <Eye className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Lapok felfedése</span>
-                </>
-              ) : (
-                <>
-                  <EyeOff className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Lapok elrejtése</span>
-                </>
+        {/* Saját lapok */}
+        <div className="mt-auto">
+          <div className="flex items-center justify-between px-1 mb-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] uppercase font-bold tracking-wider text-slate-400">Saját lapjaid</span>
+              <Badges badges={badges[myIndex]} />
+              {me.currentBet > 0 && (
+                <span className="text-[11px] font-mono font-bold text-amber-400">+{fmt(me.currentBet)}</span>
               )}
+            </div>
+            <button
+              onClick={() => setIsCardsHidden((h) => !h)}
+              className="flex items-center gap-1 h-8 px-2 -mr-2 text-[12px] font-semibold text-slate-300 active:text-amber-400"
+            >
+              {isCardsHidden ? <Eye className="w-4 h-4 text-amber-400" /> : <EyeOff className="w-4 h-4" />}
+              <span>{isCardsHidden ? 'Felfedés' : 'Elrejtés'}</span>
             </button>
           </div>
-
-          {/* Cards Display with Peek Protection */}
           <div
-            onClick={() => setIsCardsHidden(!isCardsHidden)}
-            className="relative flex items-center justify-center gap-3 p-3 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl w-full cursor-pointer"
-            title="Kattints ide a lapjaid felfedéséhez vagy elrejtéséhez"
+            onClick={() => setIsCardsHidden((h) => !h)}
+            className={`flex items-center justify-center gap-3 py-3 rounded-2xl bg-slate-900/90 border cursor-pointer ${
+              isMyTurn ? 'border-amber-400/70' : 'border-slate-800'
+            } ${me.folded ? 'opacity-50' : ''}`}
           >
-            {gameState.myHoleCards && gameState.myHoleCards.length === 2 ? (
+            {gameState.myHoleCards?.length === 2 ? (
               <>
                 <CardView card={gameState.myHoleCards[0]} size="lg" isCardHidden={isCardsHidden} />
                 <CardView card={gameState.myHoleCards[1]} size="lg" isCardHidden={isCardsHidden} />
               </>
             ) : (
-              <div className="py-6 text-xs text-slate-400 font-medium">Várakozás az osztásra...</div>
+              <div className="py-8 text-xs text-slate-400 font-medium">Várakozás az osztásra...</div>
             )}
           </div>
-
-          {/* Hand Strength Indicator (only shown when cards are visible) */}
-          {currentHandDescription && !isCardsHidden && (
-            <div className="mt-1.5 px-3 py-1 rounded-full bg-indigo-950/80 border border-indigo-700/60 text-xs font-semibold text-indigo-200">
-              {currentHandDescription}
-            </div>
-          )}
+          <div className="h-7 mt-1.5 flex items-center justify-center">
+            {handDescr && !isCardsHidden && (
+              <span className="px-3 py-0.5 rounded-full bg-indigo-950/80 border border-indigo-700/60 text-xs font-semibold text-indigo-200">
+                {handDescr}
+              </span>
+            )}
+          </div>
         </div>
-
-        {/* Turn Indicator Banner */}
-        {isMyTurn && (
-          <div className="p-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs flex items-center justify-between shadow-lg shadow-amber-500/20 animate-pulse">
-            <span>A te köröd van! Válassz akciót:</span>
-            <span className="font-mono tabular-nums text-sm bg-slate-950/20 px-2 py-0.5 rounded">
-              {turnRemainingSec}s
-            </span>
-          </div>
-        )}
-
-        {/* Hand Complete Results Overlay */}
-        {gameState.phase === 'HAND_COMPLETE' && gameState.winners && (
-          <div className="p-3 rounded-xl bg-slate-900 border border-amber-400/80 flex flex-col items-center gap-1 text-center">
-            <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider">Leosztás véget ért</span>
-            {gameState.winners.map((w, idx) => (
-              <div key={idx} className="text-xs font-bold text-white">
-                {w.nickname} nyert {w.amount.toLocaleString('hu-HU')} zsetont ({w.handDescr || 'Showdown'})
-              </div>
-            ))}
-            <button
-              onClick={onNextHand}
-              className="mt-2 w-full py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-lg text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-transform active:scale-98"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Következő leosztás indítása</span>
-            </button>
-          </div>
-        )}
-
-        {/* All-in notification during active hand (NOT rebuy!) */}
-        {me.chips === 0 && gameState.phase !== 'HAND_COMPLETE' && (
-          <div className="p-2.5 rounded-xl bg-amber-950/60 border border-amber-600/60 flex items-center justify-center gap-2 text-center">
-            <span className="text-xs font-bold text-amber-300">All-in vagy! Várakozás a leosztás kimenetelére...</span>
-          </div>
-        )}
-
-        {/* Busted out / Rebuy Option (ONLY when hand is complete!) */}
-        {me.chips === 0 && gameState.phase === 'HAND_COMPLETE' && (
-          <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-800/80 flex flex-col items-center gap-1 text-center">
-            <span className="text-xs font-bold text-rose-300">Elfogyott a zsetonod a leosztás után!</span>
-            <button
-              onClick={onRebuy}
-              className="mt-1 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow"
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              <span>Újrazsetonálás (Rebuy)</span>
-            </button>
-          </div>
-        )}
-
-        {/* Error notification */}
-        {activeError && (
-          <div className="p-2 rounded-lg bg-rose-950/80 border border-rose-700 text-xs text-rose-200 flex items-center gap-1.5">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{activeError}</span>
-          </div>
-        )}
       </main>
 
-      {/* Natural Thumb Zone: Primary Action Controls (Bottom 40%) */}
-      <footer className="bg-slate-900 border-t border-slate-800 p-3 flex flex-col gap-2">
-        {isMyTurn && allowed ? (
+      {/* Akciósáv: mindig látszik, a képernyő alján */}
+      <footer className="flex-none bg-slate-900 border-t border-slate-800 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex flex-col gap-2">
+        {errorMessage && (
+          <div className="px-2.5 py-1.5 rounded-lg bg-rose-950/80 border border-rose-700 text-xs text-rose-200 flex items-center gap-1.5">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
+        {gameState.phase === 'HAND_COMPLETE' ? (
           <>
-            {/* Quick Raise Shortcuts Bar (if allowed to bet or raise) */}
-            {(allowed.canBet || allowed.canRaise) && (
-              <div className="flex flex-col gap-1.5 pb-1">
-                <div className="flex items-center justify-between text-xs font-mono text-slate-300">
-                  <span>Cél tét: {raiseAmount.toLocaleString('hu-HU')}</span>
-                  <span className="text-slate-400">
-                    Max: {allowed.maxRaiseAmount.toLocaleString('hu-HU')}
-                  </span>
+            <div className="text-center leading-snug">
+              <div className="text-[10px] uppercase font-bold tracking-wider text-amber-400">Leosztás vége</div>
+              {gameState.winners?.map((w, i) => (
+                <div key={i} className="text-[13px] font-bold text-white">
+                  {w.nickname} nyert {fmt(w.amount)} zsetont
+                  {w.handDescr ? <span className="text-slate-400 font-medium"> · {w.handDescr}</span> : null}
                 </div>
-
+              ))}
+            </div>
+            {me.chips === 0 ? (
+              <button
+                onClick={onRebuy}
+                className="h-14 rounded-xl bg-emerald-600 active:bg-emerald-500 text-white font-black text-sm flex items-center justify-center gap-2"
+              >
+                <PlusCircle className="w-5 h-5" />
+                Elfogyott a zsetonod, újra beszállok
+              </button>
+            ) : (
+              <button
+                onClick={onNextHand}
+                className="h-14 rounded-xl bg-amber-400 active:bg-amber-300 text-slate-950 font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                <RefreshCw className="w-5 h-5" />
+                Következő leosztás
+              </button>
+            )}
+          </>
+        ) : isMyTurn && allowed ? (
+          <>
+            {raiseOpen && (allowed.canBet || allowed.canRaise) && (
+              <div className="rounded-xl bg-slate-950/70 border border-slate-800 p-2.5 flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    onClick={() => setRaiseAmount((v) => clampRaise(v - gameState.bigBlind))}
+                    aria-label="Kevesebb"
+                    className="w-12 h-12 rounded-xl bg-slate-800 active:bg-slate-700 flex items-center justify-center"
+                  >
+                    <Minus className="w-5 h-5" />
+                  </button>
+                  <div className="text-center leading-tight">
+                    <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400">Emelés erre</div>
+                    <div className="text-2xl font-black font-mono text-amber-400 tabular-nums">{fmt(raiseAmount)}</div>
+                  </div>
+                  <button
+                    onClick={() => setRaiseAmount((v) => clampRaise(v + gameState.bigBlind))}
+                    aria-label="Több"
+                    className="w-12 h-12 rounded-xl bg-slate-800 active:bg-slate-700 flex items-center justify-center"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
+                </div>
                 <div className="grid grid-cols-4 gap-1.5">
-                  <button
-                    onClick={() => handleQuickRaise('min')}
-                    className="py-1 text-xs font-semibold rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-                  >
-                    Min
-                  </button>
-                  <button
-                    onClick={() => handleQuickRaise('half_pot')}
-                    className="py-1 text-xs font-semibold rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-                  >
-                    ½ Pot
-                  </button>
-                  <button
-                    onClick={() => handleQuickRaise('pot')}
-                    className="py-1 text-xs font-semibold rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-                  >
-                    Pot
-                  </button>
-                  <button
-                    onClick={() => handleQuickRaise('allin')}
-                    className="py-1 text-xs font-bold rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition-colors"
-                  >
-                    All-in
-                  </button>
+                  {(
+                    [
+                      ['min', 'Min'],
+                      ['half', '½ Pot'],
+                      ['pot', 'Pot'],
+                      ['allin', 'All-in'],
+                    ] as const
+                  ).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      onClick={() => quickRaise(mode)}
+                      className={`h-10 rounded-lg text-xs font-bold border active:scale-95 ${
+                        mode === 'allin'
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                          : 'bg-slate-800 text-slate-200 border-slate-700'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
-
-                {/* Range Slider for granular control */}
                 <input
                   type="range"
+                  aria-label="Emelés összege"
                   min={allowed.minRaiseAmount}
                   max={allowed.maxRaiseAmount}
-                  step={gameState.bigBlind}
+                  step={1}
                   value={raiseAmount}
-                  onChange={(e) => setRaiseAmount(Number(e.target.value))}
-                  className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                  onChange={(e) => setRaiseAmount(clampRaise(Number(e.target.value)))}
+                  className="w-full h-8 accent-amber-400"
                 />
               </div>
             )}
 
-            {/* Primary Action Buttons (Thumb Hitboxes >= 48px) */}
-            <div className="grid grid-cols-3 gap-2">
-              {/* 1. Fold */}
-              <button
-                onClick={() => handleAction('FOLD')}
-                disabled={!allowed.canFold}
-                className="h-12 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-bold text-sm flex items-center justify-center shadow-lg shadow-rose-900/30 transition-all disabled:opacity-40"
-              >
-                Fold
-              </button>
-
-              {/* 2. Check / Call */}
-              {allowed.canCheck ? (
+            {raiseOpen ? (
+              <div className="grid grid-cols-3 gap-2">
                 <button
-                  onClick={() => handleAction('CHECK')}
-                  className="h-12 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-sm flex items-center justify-center shadow-lg shadow-blue-900/30 transition-all"
+                  onClick={() => setRaiseOpen(false)}
+                  className="h-14 rounded-xl bg-slate-800 active:bg-slate-700 text-slate-200 font-bold text-sm"
                 >
-                  Check
+                  Mégse
                 </button>
-              ) : (
                 <button
-                  onClick={() => handleAction('CALL')}
-                  disabled={!allowed.canCall}
-                  className="h-12 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs flex flex-col items-center justify-center shadow-lg shadow-emerald-900/30 transition-all disabled:opacity-40 leading-tight"
+                  onClick={() => act(allowed.canBet ? 'BET' : 'RAISE', raiseAmount)}
+                  className="col-span-2 h-14 rounded-xl bg-amber-500 active:bg-amber-400 text-slate-950 font-black text-base flex items-center justify-center gap-2"
                 >
-                  <span>Megadás</span>
-                  <span className="font-mono text-[11px] opacity-90 tabular-nums">
-                    +{allowed.callAmount}
-                  </span>
+                  {raiseAmount >= allowed.maxRaiseAmount ? 'All-in' : allowed.canBet ? 'Tét' : 'Emelés'}
+                  <span className="font-mono tabular-nums">{fmt(raiseAmount)}</span>
                 </button>
-              )}
-
-              {/* 3. Bet / Raise */}
-              {allowed.canBet || allowed.canRaise ? (
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
                 <button
-                  onClick={() => handleAction(allowed.canBet ? 'BET' : 'RAISE', raiseAmount)}
-                  className="h-12 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-xs flex flex-col items-center justify-center shadow-lg shadow-amber-500/20 transition-all leading-tight"
+                  onClick={() => act('FOLD')}
+                  className="h-14 rounded-xl bg-rose-600 active:bg-rose-500 text-white font-black text-base"
                 >
-                  <span>{allowed.canBet ? 'Tét (Bet)' : 'Emelés'}</span>
-                  <span className="font-mono text-[11px] tabular-nums">{raiseAmount}</span>
+                  Fold
                 </button>
-              ) : (
-                <button
-                  disabled
-                  className="h-12 rounded-xl bg-slate-800 text-slate-500 font-bold text-xs flex items-center justify-center cursor-not-allowed"
-                >
-                  Emelés
-                </button>
-              )}
+                {allowed.canCheck ? (
+                  <button
+                    onClick={() => act('CHECK')}
+                    className="h-14 rounded-xl bg-blue-600 active:bg-blue-500 text-white font-black text-base"
+                  >
+                    Check
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => act('CALL')}
+                    disabled={!allowed.canCall}
+                    className="h-14 rounded-xl bg-emerald-600 active:bg-emerald-500 text-white font-black text-base leading-tight flex flex-col items-center justify-center disabled:opacity-40"
+                  >
+                    <span>Megadás</span>
+                    <span className="font-mono text-xs tabular-nums opacity-90">{fmt(allowed.callAmount)}</span>
+                  </button>
+                )}
+                {allowed.canBet || allowed.canRaise ? (
+                  <button
+                    onClick={() => setRaiseOpen(true)}
+                    className="h-14 rounded-xl bg-amber-500 active:bg-amber-400 text-slate-950 font-black text-base"
+                  >
+                    {allowed.canBet ? 'Tét…' : 'Emelés…'}
+                  </button>
+                ) : (
+                  <button disabled className="h-14 rounded-xl bg-slate-800 text-slate-500 font-bold text-sm">
+                    Nem emelhetsz
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="text-center text-[11px] font-semibold text-amber-300">
+              A te köröd van · {remainingSec} mp
             </div>
           </>
         ) : (
-          <div className="h-12 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-xs text-slate-400 font-medium">
-            {gameState.phase === 'HAND_COMPLETE'
-              ? 'Leosztás befejeződött.'
-              : me.folded
-              ? 'Ebből a leosztásból kiszálltál (Fold).'
+          <div className="h-14 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-sm text-slate-300 font-medium text-center px-3">
+            {me.folded
+              ? 'Kiszálltál ebből a leosztásból.'
               : me.allIn
-              ? 'All-in vagy! Sok szerencsét a kártyákhoz.'
-              : 'Várakozás a többi játékos lépésére...'}
+              ? 'All-in vagy, várjuk a lapokat.'
+              : actor
+              ? `${actor.nickname} lép · ${remainingSec} mp`
+              : 'Várakozás...'}
           </div>
         )}
       </footer>

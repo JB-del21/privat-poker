@@ -10,7 +10,7 @@ import { EyeOff } from 'lucide-react';
 interface CardViewProps {
   card?: Card;
   faceDown?: boolean;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   isCardHidden?: boolean;
   className?: string;
   isWinningCard?: boolean;
@@ -39,6 +39,7 @@ export const CardView: React.FC<CardViewProps> = ({
   onClick,
 }) => {
   const sizeClasses = {
+    xs: 'w-8 h-11 text-[10px] rounded-md shadow-sm',
     sm: 'w-10 h-14 text-xs rounded-md shadow-sm',
     md: 'w-14 h-20 text-sm rounded-lg shadow-md',
     lg: 'w-20 h-28 text-base rounded-xl shadow-lg',
@@ -62,6 +63,21 @@ export const CardView: React.FC<CardViewProps> = ({
 
   const suitInfo = SUIT_SYMBOLS[card.suit];
   const rankLabel = RANK_LABELS[card.rank];
+
+  // Apró kártya (ellenfél-csempék, showdown): csak érték + szín, középen
+  if (size === 'xs') {
+    return (
+      <div
+        onClick={onClick}
+        className={`relative ${sizeClasses} bg-white border ${
+          isWinningCard ? 'border-amber-400 ring-2 ring-amber-400/80' : 'border-slate-300'
+        } flex flex-col items-center justify-center leading-none select-none ${className}`}
+      >
+        <span className={`font-bold font-mono text-[12px] ${suitInfo.color}`}>{rankLabel}</span>
+        <span className={`text-[13px] ${suitInfo.color}`}>{suitInfo.char}</span>
+      </div>
+    );
+  }
 
   return (
     <div

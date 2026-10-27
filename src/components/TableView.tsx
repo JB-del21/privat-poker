@@ -7,6 +7,8 @@ import React, { useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { Card, PublicGameState, PublicPlayerView } from '../types/poker';
 import { CardView } from './CardView';
+import { TableCompact } from './TableCompact';
+import { getSeatBadges } from '../utils/seats';
 import { soundManager } from '../utils/audio';
 import { Copy, Volume2, VolumeX, Maximize2, Users, RefreshCw } from 'lucide-react';
 import tableFelt from '../assets/images/poker_table_felt_1793043187623.jpg';
@@ -16,6 +18,25 @@ interface TableViewProps {
   onNextHand?: () => void;
   onSwitchToPlayer?: () => void;
   isHost?: boolean;
+  myPlayerId?: string;
+}
+
+
+/** Álló telefon / keskeny képernyő → függőleges lista; fekvő TV/tablet → ovális asztal. */
+function useCompactLayout(): boolean {
+  const query = '(max-width: 767px), (max-aspect-ratio: 1/1)';
+  const [compact, setCompact] = React.useState<boolean>(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(query).matches : false
+  );
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(query);
+    const onChange = () => setCompact(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return compact;
 }
 
 export const TableView: React.FC<TableViewProps> = ({
@@ -23,7 +44,9 @@ export const TableView: React.FC<TableViewProps> = ({
   onNextHand,
   onSwitchToPlayer,
   isHost = false,
+  myPlayerId,
 }) => {
+  const compact = useCompactLayout();
   const [copied, setCopied] = React.useState(false);
   const [isMuted, setIsMuted] = React.useState(soundManager.getMuted());
 
@@ -88,6 +111,24 @@ export const TableView: React.FC<TableViewProps> = ({
     : gameState.turnTimeLimitSec;
 
   const activePlayer = gameState.players[gameState.currentActionIndex];
+  const seatBadges = getSeatBadges(gameState.players.length, gameState.dealerIndex);
+
+  if (compact) {
+    return (
+      <TableCompact
+        gameState={gameState}
+        myPlayerId={myPlayerId}
+        remainingSec={turnRemainingSec}
+        totalPot={totalPot}
+        copied={copied}
+        isMuted={isMuted}
+        onCopyLink={copyRoomLink}
+        onToggleSound={toggleSound}
+        onNextHand={onNextHand}
+        onSwitchToPlayer={onSwitchToPlayer}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-3 md:p-6 overflow-hidden select-none">
@@ -252,8 +293,8 @@ export const TableView: React.FC<TableViewProps> = ({
             const pos = SEAT_POSITIONS[index % SEAT_POSITIONS.length];
             const isTurn = gameState.phase !== 'HAND_COMPLETE' && gameState.currentActionIndex === index;
             const isDealer = gameState.dealerIndex === index;
-            const isSb = (gameState.dealerIndex + 1) % gameState.players.length === index;
-            const isBb = (gameState.dealerIndex + 2) % gameState.players.length === index;
+            const isSb = !!seatBadges[index]?.includes('SB');
+            const isBb = !!seatBadges[index]?.includes('BB');
 
             return (
               <div
@@ -299,12 +340,12 @@ export const TableView: React.FC<TableViewProps> = ({
                           D
                         </span>
                       )}
-                      {gameState.players.length > 2 && isSb && (
+                      {isSb && (
                         <span className="w-4 h-4 rounded-full bg-blue-500 text-white font-bold text-[8px] flex items-center justify-center shadow">
                           SB
                         </span>
                       )}
-                      {gameState.players.length > 2 && isBb && (
+                      {isBb && (
                         <span className="w-4 h-4 rounded-full bg-amber-500 text-white font-bold text-[8px] flex items-center justify-center shadow">
                           BB
                         </span>
